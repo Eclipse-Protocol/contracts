@@ -25,7 +25,10 @@ contract AlphaVaultTest is Test {
     bytes21 internal constant FEED_SAT = bytes21(uint168(2));
 
     uint256 internal constant MAX_POSITION_SIZE_BPS = 5_000; // 50% of TVL
-    uint256 internal constant MAX_DRAWDOWN_BPS = 1_500; // 15%
+    // Must stay above ~1667 bps: the genesis high-water mark (1.2x) sits ~16.67% above the genesis
+    // PPS (1.0x), so any threshold below that gap trips the breaker on the very first trade before
+    // any real drawdown occurs.
+    uint256 internal constant MAX_DRAWDOWN_BPS = 2_000; // 20%
 
     MockERC20 internal underlying;
     MockERC20 internal satellite;
@@ -246,7 +249,7 @@ contract AlphaVaultTest is Test {
         vault.submitInstruction(instruction, signature);
 
         // Crash the satellite asset's price 90% (2e18 -> 0.2e18): NAV drops from 1000 to 910,
-        // an ~24% drawdown from the 1.2e18 genesis high-water mark — past the 15% breaker threshold.
+        // an ~24% drawdown from the 1.2e18 genesis high-water mark — past the 20% breaker threshold.
         ftso.setPrice(FEED_SAT, 0.2e18, uint64(block.timestamp));
         vault.refreshPositionValue();
         vault.checkDrawdown();

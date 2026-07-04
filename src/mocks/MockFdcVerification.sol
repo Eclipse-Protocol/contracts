@@ -16,15 +16,21 @@ contract MockFdcVerification is IFdcVerification {
         nextResult = result;
     }
 
-    function verifyWeb2Json(IWeb2Json.Proof calldata) external view returns (bool _proved) {
+    function verifyWeb2Json(
+        IWeb2Json.Proof calldata
+    ) external view returns (bool _proved) {
         return nextResult;
     }
 
     /// @notice Builds a proof whose attested response body ABI-encodes `(vault, signer)`, matching
     /// what EnclaveRegistry expects to decode from a real Web2Json attestation response.
-    function buildProof(address vault, address signer) external pure returns (IWeb2Json.Proof memory proof) {
-        IWeb2Json.ResponseBody memory responseBody =
-            IWeb2Json.ResponseBody({abiEncodedData: abi.encode(vault, signer)});
+    function buildProof(
+        address vault,
+        address signer
+    ) external view returns (IWeb2Json.Proof memory proof) {
+        IWeb2Json.ResponseBody memory responseBody = IWeb2Json.ResponseBody({
+            abiEncodedData: abi.encode(vault, signer)
+        });
 
         IWeb2Json.RequestBody memory requestBody = IWeb2Json.RequestBody({
             url: "",
@@ -45,6 +51,9 @@ contract MockFdcVerification is IFdcVerification {
             responseBody: responseBody
         });
 
-        proof = IWeb2Json.Proof({merkleProof: new bytes32[](0), data: response});
+        proof = IWeb2Json.Proof({
+            merkleProof: new bytes32[](0),
+            data: response
+        });
     }
 }

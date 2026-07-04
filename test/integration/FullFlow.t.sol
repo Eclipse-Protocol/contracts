@@ -125,6 +125,21 @@ contract FullFlowTest is Test {
         vault.submitInstruction(instruction, signature);
     }
 
+    function _submitSell(uint256 size, uint256 minOut) internal {
+        nonceCounter++;
+        IAlphaVault.TradeInstruction memory instruction = IAlphaVault.TradeInstruction({
+            asset: address(satellite),
+            direction: IAlphaVault.TradeDirection.Sell,
+            size: size,
+            minAmountOut: minOut,
+            nonce: nonceCounter,
+            deadline: block.timestamp + 1 hours
+        });
+        bytes32 digest = vault.hashTradeInstruction(instruction);
+        bytes memory signature = enclaveSigner.sign(digest);
+        vault.submitInstruction(instruction, signature);
+    }
+
     function test_fullProtocolLifecycle() public {
         assertTrue(strategyRegistry.isRegistered(address(vault)));
 
@@ -179,6 +194,16 @@ contract FullFlowTest is Test {
         uint256 strategistAfterSecondHarvest = vault.balanceOf(strategistPayout);
         assertGt(treasuryAfterSecondHarvest, treasuryAfterFirstHarvest);
         assertGt(strategistAfterSecondHarvest, strategistAfterFirstHarvest);
+
+        // --- Unwind the satellite position back into underlying before redemptions: NAV includes the
+        // mark-to-market value of the held position, but that value only becomes real, withdrawable
+        // underlying once the position is actually sold. The mock DEX rate is updated to match the
+        // last FTSO price so the sell realizes the same gain already priced into NAV (mirroring a real
+        // DEX, whose price would have moved together with the FTSO feed). ---
+        router.setRate(address(satellite), address(underlying), 12e18);
+        uint256 positionSize = satellite.balanceOf(address(vault));
+        _submitSell(positionSize, 1);
+        assertEq(vault.currentPosition(), address(0), "position must be fully unwound before redemptions");
 
         // --- Withdrawals: both investors redeem everything; zero withdrawal fee, nothing extra
         // computed at redemption time (fees were already priced in via dilution at each harvest). ---

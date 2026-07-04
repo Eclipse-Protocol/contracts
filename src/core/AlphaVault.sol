@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {ERC20, ERC4626, IERC20} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -216,7 +217,7 @@ contract AlphaVault is IAlphaVault, ERC4626, Ownable2Step, EIP712, Pausable, Ree
 
     /// @notice Total vault NAV denominated in the underlying asset: on-hand underlying balance plus
     /// the last-refreshed cross-rate value of any held satellite position.
-    function totalAssets() public view override returns (uint256) {
+    function totalAssets() public view override(ERC4626, IERC4626) returns (uint256) {
         return IERC20(asset()).balanceOf(address(this)) + cachedPositionValue;
     }
 
@@ -323,24 +324,39 @@ contract AlphaVault is IAlphaVault, ERC4626, Ownable2Step, EIP712, Pausable, Ree
     // ERC-4626 reentrancy hardening (deposit/mint are also guarded; no fee logic added to any path)
     // ---------------------------------------------------------------------
 
-    function deposit(uint256 assets, address receiver) public override nonReentrant returns (uint256) {
+    function deposit(uint256 assets, address receiver)
+        public
+        override(ERC4626, IERC4626)
+        nonReentrant
+        returns (uint256)
+    {
         return super.deposit(assets, receiver);
     }
 
-    function mint(uint256 shares, address receiver) public override nonReentrant returns (uint256) {
+    function mint(uint256 shares, address receiver)
+        public
+        override(ERC4626, IERC4626)
+        nonReentrant
+        returns (uint256)
+    {
         return super.mint(shares, receiver);
     }
 
     function withdraw(uint256 assets, address receiver, address owner_)
         public
-        override
+        override(ERC4626, IERC4626)
         nonReentrant
         returns (uint256)
     {
         return super.withdraw(assets, receiver, owner_);
     }
 
-    function redeem(uint256 shares, address receiver, address owner_) public override nonReentrant returns (uint256) {
+    function redeem(uint256 shares, address receiver, address owner_)
+        public
+        override(ERC4626, IERC4626)
+        nonReentrant
+        returns (uint256)
+    {
         return super.redeem(shares, receiver, owner_);
     }
 

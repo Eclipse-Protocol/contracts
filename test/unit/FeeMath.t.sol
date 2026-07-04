@@ -78,8 +78,10 @@ contract FeeMathTest is Test {
         assertEq(treasuryShares, expectedTreasury);
         assertEq(strategistShares, expectedStrategist);
 
-        // 3:7 split ratio should hold (within integer rounding of 1 wei).
-        assertApproxEqAbs(strategistShares * 3, treasuryShares * 7, 3);
+        // 3:7 split ratio should hold (within integer rounding from the two sequential divisions —
+        // the combined-shares division and the treasury/strategist split division — each of which can
+        // round down independently).
+        assertApproxEqAbs(strategistShares * 3, treasuryShares * 7, 10);
     }
 
     function test_computeFeeShares_zeroWhenSupplyZero() public pure {
