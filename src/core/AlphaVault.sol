@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {ERC20, ERC4626, IERC20} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
@@ -251,7 +252,15 @@ contract AlphaVault is IAlphaVault, ERC4626, Ownable2Step, EIP712, Pausable, Ree
             return;
         }
 
-        cachedPositionValue = (posBalance * posPrice) / basePrice;
+        // posBalance is denominated in currentPosition's own decimals, but the result must be
+        // denominated in the underlying asset's decimals (see {totalAssets}) — posPrice/basePrice
+        // alone is just a dimensionless price ratio and does not account for that difference.
+        uint8 posDecimals = IERC20Metadata(currentPosition).decimals();
+        uint8 baseDecimals = IERC20Metadata(asset()).decimals();
+
+        cachedPositionValue = baseDecimals >= posDecimals
+            ? (posBalance * posPrice * (10 ** (baseDecimals - posDecimals))) / basePrice
+            : (posBalance * posPrice) / (basePrice * (10 ** (posDecimals - baseDecimals)));
     }
 
     function _commitEpoch() private {

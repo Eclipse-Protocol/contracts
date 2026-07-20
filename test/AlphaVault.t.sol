@@ -336,4 +336,77 @@ contract AlphaVaultTest is Test {
         assertEq(vault.balanceOf(strategist), 0);
         assertEq(vault.highWaterMark(), 1.2e18);
     }
+
+    // ---------------------------------------------------------------------
+    // Regression: mismatched underlying/satellite decimals (Coston2 production shape —
+    // 6-decimal Mock USDC underlying against an 18-decimal satellite — previously
+    // overstated cachedPositionValue by 10^12, permanently corrupting highWaterMark.
+    // ---------------------------------------------------------------------
+
+    function test_refreshPositionValue_handlesMismatchedDecimals() public {
+        MockERC20 underlying6 = new MockERC20("Mock USDC", "mUSDC", 6);
+        MockERC20 satellite18 = new MockERC20("Mock FLR", "mFLR", 18);
+
+        MockDexRouter router2 = new MockDexRouter();
+        // 100 mUSDC (1e8 raw, 6dp) -> 50 mFLR (5e19 raw, 18dp): consistent with $1 / $2 FTSO prices below.
+        router2.setRate(address(underlying6), address(satellite18), 5e29);
+
+        MockFtsoV2 ftso2 = new MockFtsoV2();
+        ftso2.setPrice(FEED_BASE, 1e18, uint64(block.timestamp)); // $1
+        ftso2.setPrice(FEED_SAT, 2e18, uint64(block.timestamp)); // $2
+
+        PerformanceLedger ledger2 = new PerformanceLedger(owner);
+        EnclaveRegistry registry2 = new EnclaveRegistry(owner, IFdcVerification(address(fdc)));
+
+        AlphaVault vault2 = new AlphaVault(
+            IERC20(address(underlying6)),
+            "Eclipse Alpha Vault Shares",
+            "eaVLT",
+            owner,
+            treasury,
+            strategist,
+            IEnclaveRegistry(address(registry2)),
+            IDexRouter(address(router2)),
+            IFtsoV2(address(ftso2)),
+            ledger2,
+            MAX_POSITION_SIZE_BPS,
+            MAX_DRAWDOWN_BPS
+        );
+
+        vm.prank(owner);
+        ledger2.setVault(address(vault2));
+
+        vm.startPrank(owner);
+        vault2.setFeedId(address(underlying6), FEED_BASE);
+        vault2.setFeedId(address(satellite18), FEED_SAT);
+        vm.stopPrank();
+
+        IWeb2Json.Proof memory proof = fdc.buildProof(address(vault2), enclaveSigner.enclaveAddress());
+        registry2.registerEnclave(address(vault2), enclaveSigner.enclaveAddress(), proof);
+
+        underlying6.mint(investor1, 1_000e6);
+        vm.prank(investor1);
+        underlying6.approve(address(vault2), type(uint256).max);
+        vm.prank(investor1);
+        vault2.deposit(1_000e6, investor1);
+
+        IAlphaVault.TradeInstruction memory instruction = IAlphaVault.TradeInstruction({
+            asset: address(satellite18),
+            direction: IAlphaVault.TradeDirection.Buy,
+            size: 100e6,
+            minAmountOut: 40e18,
+            nonce: 1,
+            deadline: block.timestamp + 1 hours
+        });
+        bytes32 digest = vault2.hashTradeInstruction(instruction);
+        bytes memory signature = enclaveSigner.sign(digest);
+        vault2.submitInstruction(instruction, signature);
+
+        // 50 mFLR at $2 == $100 == 100e6 in the underlying's 6-decimal terms, NOT 100e18.
+        assertEq(vault2.cachedPositionValue(), 100e6);
+        // Value-preserving swap: NAV should still read ~1000 (900 underlying + 100 position value),
+        // not the ~10^12-inflated figure the pre-fix formula would have produced.
+        assertEq(vault2.totalAssets(), 1_000e6);
+        assertEq(vault2.highWaterMark(), 1.2e18); // untouched: PPS still below the genesis hurdle
+    }
 }
