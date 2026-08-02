@@ -343,70 +343,134 @@ contract AlphaVaultTest is Test {
     // overstated cachedPositionValue by 10^12, permanently corrupting highWaterMark.
     // ---------------------------------------------------------------------
 
-    function test_refreshPositionValue_handlesMismatchedDecimals() public {
-        MockERC20 underlying6 = new MockERC20("Mock USDC", "mUSDC", 6);
-        MockERC20 satellite18 = new MockERC20("Mock FLR", "mFLR", 18);
+    struct MismatchedDecimalsFixture {
+        MockERC20 underlying6;
+        MockERC20 satellite18;
+        MockDexRouter router;
+        MockFtsoV2 ftso;
+        PerformanceLedger ledger;
+        AlphaVault vault;
+    }
 
-        MockDexRouter router2 = new MockDexRouter();
+    /// @dev Deploys a fresh vault on a 6-decimal underlying / 18-decimal satellite pair, mirroring
+    /// the real Coston2 deployment shape, funded with a 1,000-unit investor1 deposit.
+    function _deployMismatchedDecimalsVault() internal returns (MismatchedDecimalsFixture memory f) {
+        f.underlying6 = new MockERC20("Mock USDC", "mUSDC", 6);
+        f.satellite18 = new MockERC20("Mock FLR", "mFLR", 18);
+
+        f.router = new MockDexRouter();
         // 100 mUSDC (1e8 raw, 6dp) -> 50 mFLR (5e19 raw, 18dp): consistent with $1 / $2 FTSO prices below.
-        router2.setRate(address(underlying6), address(satellite18), 5e29);
+        f.router.setRate(address(f.underlying6), address(f.satellite18), 5e29);
 
-        MockFtsoV2 ftso2 = new MockFtsoV2();
-        ftso2.setPrice(FEED_BASE, 1e18, uint64(block.timestamp)); // $1
-        ftso2.setPrice(FEED_SAT, 2e18, uint64(block.timestamp)); // $2
+        f.ftso = new MockFtsoV2();
+        f.ftso.setPrice(FEED_BASE, 1e18, uint64(block.timestamp)); // $1
+        f.ftso.setPrice(FEED_SAT, 2e18, uint64(block.timestamp)); // $2
 
-        PerformanceLedger ledger2 = new PerformanceLedger(owner);
+        f.ledger = new PerformanceLedger(owner);
         EnclaveRegistry registry2 = new EnclaveRegistry(owner, IFdcVerification(address(fdc)));
 
-        AlphaVault vault2 = new AlphaVault(
-            IERC20(address(underlying6)),
+        f.vault = new AlphaVault(
+            IERC20(address(f.underlying6)),
             "Eclipse Alpha Vault Shares",
             "eaVLT",
             owner,
             treasury,
             strategist,
             IEnclaveRegistry(address(registry2)),
-            IDexRouter(address(router2)),
-            IFtsoV2(address(ftso2)),
-            ledger2,
+            IDexRouter(address(f.router)),
+            IFtsoV2(address(f.ftso)),
+            f.ledger,
             MAX_POSITION_SIZE_BPS,
             MAX_DRAWDOWN_BPS
         );
 
         vm.prank(owner);
-        ledger2.setVault(address(vault2));
+        f.ledger.setVault(address(f.vault));
 
         vm.startPrank(owner);
-        vault2.setFeedId(address(underlying6), FEED_BASE);
-        vault2.setFeedId(address(satellite18), FEED_SAT);
+        f.vault.setFeedId(address(f.underlying6), FEED_BASE);
+        f.vault.setFeedId(address(f.satellite18), FEED_SAT);
         vm.stopPrank();
 
-        IWeb2Json.Proof memory proof = fdc.buildProof(address(vault2), enclaveSigner.enclaveAddress());
-        registry2.registerEnclave(address(vault2), enclaveSigner.enclaveAddress(), proof);
+        IWeb2Json.Proof memory proof = fdc.buildProof(address(f.vault), enclaveSigner.enclaveAddress());
+        registry2.registerEnclave(address(f.vault), enclaveSigner.enclaveAddress(), proof);
 
-        underlying6.mint(investor1, 1_000e6);
+        f.underlying6.mint(investor1, 1_000e6);
         vm.prank(investor1);
-        underlying6.approve(address(vault2), type(uint256).max);
+        f.underlying6.approve(address(f.vault), type(uint256).max);
         vm.prank(investor1);
-        vault2.deposit(1_000e6, investor1);
+        f.vault.deposit(1_000e6, investor1);
+    }
+
+    function test_refreshPositionValue_handlesMismatchedDecimals() public {
+        MismatchedDecimalsFixture memory f = _deployMismatchedDecimalsVault();
 
         IAlphaVault.TradeInstruction memory instruction = IAlphaVault.TradeInstruction({
-            asset: address(satellite18),
+            asset: address(f.satellite18),
             direction: IAlphaVault.TradeDirection.Buy,
             size: 100e6,
             minAmountOut: 40e18,
             nonce: 1,
             deadline: block.timestamp + 1 hours
         });
-        bytes32 digest = vault2.hashTradeInstruction(instruction);
+        bytes32 digest = f.vault.hashTradeInstruction(instruction);
         bytes memory signature = enclaveSigner.sign(digest);
-        vault2.submitInstruction(instruction, signature);
+        f.vault.submitInstruction(instruction, signature);
 
         // 50 mFLR at $2 == $100 == 100e6 in the underlying's 6-decimal terms, NOT 100e18.
-        assertEq(vault2.cachedPositionValue(), 100e6);
+        assertEq(f.vault.cachedPositionValue(), 100e6);
         // Value-preserving swap: NAV should still read ~1000 (900 underlying + 100 position value),
         // not the ~10^12-inflated figure the pre-fix formula would have produced.
-        assertEq(vault2.totalAssets(), 1_000e6);
-        assertEq(vault2.highWaterMark(), 1.2e18); // untouched: PPS still below the genesis hurdle
+        assertEq(f.vault.totalAssets(), 1_000e6);
+        assertEq(f.vault.highWaterMark(), 1.2e18); // untouched: PPS still below the genesis hurdle
+    }
+
+    // ---------------------------------------------------------------------
+    // Sprint 3 Day 1: synthetic profitable harvest — proves the 3%/7% treasury/strategist fee
+    // split fires with the EXACT expected share amounts (not just "some fee > 0"), on the same
+    // mismatched-decimals shape as the real deployment, independent of whether any given week's
+    // real automated trades happen to be profitable.
+    // ---------------------------------------------------------------------
+
+    function test_harvest_mintsExactTreasuryStrategistSplitOnNewHigh() public {
+        MismatchedDecimalsFixture memory f = _deployMismatchedDecimalsVault();
+
+        IAlphaVault.TradeInstruction memory instruction = IAlphaVault.TradeInstruction({
+            asset: address(f.satellite18),
+            direction: IAlphaVault.TradeDirection.Buy,
+            size: 100e6,
+            minAmountOut: 40e18,
+            nonce: 1,
+            deadline: block.timestamp + 1 hours
+        });
+        bytes32 digest = f.vault.hashTradeInstruction(instruction);
+        f.vault.submitInstruction(instruction, enclaveSigner.sign(digest));
+
+        // Pump the satellite price 15x ($2 -> $30), same multiple as the same-decimal harvest test,
+        // so NAV rises well above the 1.2x genesis hurdle: 900e6 + 50e18*$30/$1(in 6dp) = 900e6 + 1_500e6.
+        f.ftso.setPrice(FEED_SAT, 30e18, uint64(block.timestamp));
+        f.vault.refreshPositionValue();
+
+        uint256 assetsBefore = f.vault.totalAssets();
+        uint256 supplyBefore = f.vault.totalSupply();
+        uint256 ppsBefore = (assetsBefore * 1e18) / supplyBefore;
+        uint256 hwmBefore = f.vault.highWaterMark();
+        assertGt(ppsBefore, hwmBefore, "sanity: pump must clear the hurdle");
+
+        // Mirror FeeMath.computeFeeShares exactly to compute the expected split independently.
+        uint256 gainPerShare = ppsBefore - hwmBefore;
+        uint256 totalGainValue = (gainPerShare * supplyBefore) / 1e18;
+        uint256 feeValue = (totalGainValue * 1_000) / 10_000; // 10% performance fee
+        uint256 expectedCombined = (feeValue * supplyBefore) / (assetsBefore - feeValue);
+        uint256 expectedTreasury = (expectedCombined * 300) / 1_000; // 3%
+        uint256 expectedStrategist = expectedCombined - expectedTreasury; // 7%
+
+        f.vault.harvest();
+
+        assertEq(f.vault.balanceOf(treasury), expectedTreasury);
+        assertEq(f.vault.balanceOf(strategist), expectedStrategist);
+        assertGt(expectedTreasury, 0);
+        assertGt(expectedStrategist, 0);
+        assertEq(f.vault.highWaterMark(), ppsBefore);
     }
 }
