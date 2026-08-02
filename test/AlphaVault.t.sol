@@ -352,9 +352,10 @@ contract AlphaVaultTest is Test {
         AlphaVault vault;
     }
 
-    /// @dev Deploys a fresh vault on a 6-decimal underlying / 18-decimal satellite pair, mirroring
-    /// the real Coston2 deployment shape, funded with a 1,000-unit investor1 deposit.
-    function _deployMismatchedDecimalsVault() internal returns (MismatchedDecimalsFixture memory f) {
+    /// @dev Deploys and wires a fresh vault on a 6-decimal underlying / 18-decimal satellite pair,
+    /// mirroring the real Coston2 deployment shape, but does NOT deposit — lets callers inspect
+    /// genesis state (e.g. {highWaterMark}) before any supply/assets exist.
+    function _deployMismatchedDecimalsVaultUnfunded() internal returns (MismatchedDecimalsFixture memory f) {
         f.underlying6 = new MockERC20("Mock USDC", "mUSDC", 6);
         f.satellite18 = new MockERC20("Mock FLR", "mFLR", 18);
 
@@ -394,6 +395,11 @@ contract AlphaVaultTest is Test {
 
         IWeb2Json.Proof memory proof = fdc.buildProof(address(f.vault), enclaveSigner.enclaveAddress());
         registry2.registerEnclave(address(f.vault), enclaveSigner.enclaveAddress(), proof);
+    }
+
+    /// @dev Same as {_deployMismatchedDecimalsVaultUnfunded}, funded with a 1,000-unit investor1 deposit.
+    function _deployMismatchedDecimalsVault() internal returns (MismatchedDecimalsFixture memory f) {
+        f = _deployMismatchedDecimalsVaultUnfunded();
 
         f.underlying6.mint(investor1, 1_000e6);
         vm.prank(investor1);
@@ -472,5 +478,22 @@ contract AlphaVaultTest is Test {
         assertGt(expectedTreasury, 0);
         assertGt(expectedStrategist, 0);
         assertEq(f.vault.highWaterMark(), ppsBefore);
+    }
+
+    // ---------------------------------------------------------------------
+    // Regression: suspected-but-unconfirmed second decimals bug in HWM seeding/comparison
+    // (flagged 2026-08-02) — the theory was that the constructor might derive genesis
+    // {highWaterMark} from live state using the underlying's raw decimals rather than a fixed
+    // WAD constant, producing something on the order of 1e29 instead of 1.2e18 once a 6-decimal
+    // underlying is involved. Closes the exact coverage gap called out: assert the value
+    // immediately after construction, before any deposit exists.
+    // ---------------------------------------------------------------------
+
+    function test_highWaterMark_seededCorrectlyBeforeAnyDeposit_mismatchedDecimals() public {
+        MismatchedDecimalsFixture memory f = _deployMismatchedDecimalsVaultUnfunded();
+
+        assertEq(f.vault.totalAssets(), 0);
+        assertEq(f.vault.totalSupply(), 0);
+        assertEq(f.vault.highWaterMark(), 1.2e18, "genesis HWM must be the fixed WAD constant, not derived from 0/0 state");
     }
 }
