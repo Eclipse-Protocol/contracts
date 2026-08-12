@@ -33,8 +33,6 @@ Built for **Flare Summer Signal Hackathon — Bounty 2: Confidential Compute App
   - [Tech Stack](#tech-stack)
   - [Flare Bounty Alignment](#flare-bounty-alignment)
   - [What's Newly Built for This Hackathon](#whats-newly-built-for-this-hackathon)
-  - [MVP Scope (Aug 14 Deadline)](#mvp-scope-aug-14-deadline)
-  - [Demo Pitch (60 Seconds)](#demo-pitch-60-seconds)
   - [Roadmap Beyond the Hackathon](#roadmap-beyond-the-hackathon)
 
 ---
@@ -441,27 +439,6 @@ This is a brand-new protocol, not a port of an existing product — everything b
 
 ---
 
-## MVP Scope (Aug 14 Deadline)
-
-**Week 1** — Contracts: `EnclaveRegistry`, `AlphaVault` (deposit/withdraw/instruction verification/`harvest()`), `FeeMath` library with full unit test coverage of profit/loss/hurdle/multi-harvest sequences (including the "no double-charging a recovery" case), Foundry test suite, deploy to Coston2.
-
-**Week 2** — Enclave: containerized strategy runner (one real, simple momentum/mean-reversion strategy on a live Flare-listed pair), attestation bootstrap, ephemeral key signing. Start live testnet trading as early as possible to accumulate a real track record before demo day.
-
-**Week 3** — Relayer + FDC integration (enclave attestation → on-chain registration), `PerformanceLedger` wiring, DEX router execution, end-to-end testnet run, at least one real `harvest()` call that crosses the high-water mark to demonstrate the fee-minting mechanism firing on-chain.
-
-**Week 4** — Frontend (investor dashboard with attestation badge + live NAV chart, strategist dashboard), polish, demo video, submission writeup.
-
----
-
-## Demo Pitch (60 Seconds)
-
-> "Right now, the best trading strategies in crypto never touch on-chain capital, because the moment you publish a signal, it's dead — copied or front-run within hours. Eclipse Protocol solves that by running the strategy entirely inside a hardware-attested confidential enclave. The strategist's code never leaves the TEE — not to us, not to investors, not even to Flare validators. What comes out is a single signed trade instruction, verified on-chain against a registered enclave key, executed by a real vault, and recorded into a tamper-evident performance ledger.
->
-> And we don't charge a cent unless investors actually make money — zero management fees, zero listing fees, zero withdrawal fees, just a 10% cut of new profit above a 20% hurdle, split 3% to the protocol and 7% to the strategist, paid as minted vault shares the moment a harvest sets a new all-time high — never as cash pulled out of the vault.
->
-> On screen right now, you're watching a real strategy trade live inside a Confidential Space enclave on Google Cloud, its trades landing on Flare Coston2 in real time, building a verifiable track record — and you still can't see a single line of its logic. That's the whole point: verifiable alpha, invisible strategy, and a fee model that only wins when you do."
-
----
 
 ## Roadmap Beyond the Hackathon
 
